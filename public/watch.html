@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Watch Together</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body class="wt">
+    <div id="wt-gate" class="login-wrap hidden">
+      <div class="login-card">
+        <h1>Watch Together</h1>
+        <p class="sub">You need to sign in first.</p>
+        <a class="btn primary" style="width: 100%; text-align: center" href="/">Go to sign in</a>
+      </div>
+    </div>
+
+    <div id="wt-app" class="hidden">
+      <header class="topbar">
+        <a class="wordmark wt-wm" href="/">Media Vault<small>Watch Together</small></a>
+        <div class="spacer"></div>
+        <span class="wt-status" id="wt-status">offline</span>
+        <span class="who" id="who"></span>
+        <a class="linkish" href="/">Library</a>
+      </header>
+
+      <!-- Lobby -->
+      <section id="wt-lobby" class="wt-lobby hidden">
+        <h2>Start or join a room</h2>
+        <p class="sub">Both people sign in here, join the same room, and press play.</p>
+        <div class="wt-lobby-grid">
+          <div class="panel">
+            <h3>Pick something to watch</h3>
+            <p class="hint">Choosing a file opens a room and loads it for everyone.</p>
+            <div id="wt-pick" class="wt-pick"></div>
+          </div>
+          <div class="panel">
+            <h3>Join with a code</h3>
+            <div class="field">
+              <label for="wt-code">Room code</label>
+              <input id="wt-code" placeholder="ABC123" maxlength="8" autocomplete="off" />
+            </div>
+            <button class="btn primary" id="wt-join" type="button">Join room</button>
+            <h3 style="margin-top: 20px">Open rooms</h3>
+            <div id="wt-open" class="wt-open"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Room -->
+      <section id="wt-room" class="wt-room hidden">
+        <div class="wt-stage">
+          <video id="wt-video" playsinline preload="metadata"></video>
+          <div id="wt-empty" class="wt-empty">
+            <p>No file in this room yet.</p>
+            <button class="btn primary" id="wt-load" type="button">Choose from vault</button>
+          </div>
+          <div id="wt-badge" class="wt-badge hidden"></div>
+        </div>
+
+        <div class="wt-controls">
+          <button class="btn small" id="wt-play" type="button">Play</button>
+          <span class="wt-time" id="wt-time">0:00 / 0:00</span>
+          <input id="wt-seek" class="wt-seek" type="range" min="0" max="1000" value="0" aria-label="Seek" />
+          <span class="spacer"></span>
+          <button class="btn small" id="wt-load-2" type="button">Load file</button>
+        </div>
+
+        <div class="wt-side">
+          <div class="wt-call">
+            <div class="wt-side-head">
+              <h3>Call</h3>
+              <button class="btn small" id="wt-call-btn" type="button">Join call</button>
+            </div>
+            <div class="wt-tiles">
+              <div class="wt-tilewrap">
+                <video id="wt-local" class="wt-tile" muted playsinline></video>
+                <span class="wt-tilelabel">You</span>
+              </div>
+              <div id="wt-remotes"></div>
+            </div>
+          </div>
+          <div class="wt-people">
+            <div class="wt-side-head">
+              <h3>In the room</h3>
+              <button class="btn small" id="wt-copy" type="button">Copy link</button>
+            </div>
+            <ul id="wt-members" class="wt-members"></ul>
+            <code id="wt-link" class="wt-link"></code>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="toasts" aria-live="polite"></div>
+    <div id="modal-root"></div>
+    <script src="/watch.js" type="module"></script>
+  </body>
+</html>

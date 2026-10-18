@@ -1,0 +1,17 @@
+node_modules/
+dist/
+data/
+tmp/
+*.log
+
+# Secrets and session material — never commit.
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+!data/.gitkeep

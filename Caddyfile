@@ -1,0 +1,17 @@
+# Set DOMAIN and EMAIL in .env. Caddy provisions and renews TLS automatically
+# (needs ports 80 and 443 reachable and a DNS A/AAAA record pointing here).
+{
+	email {$EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# WebSocket upgrades (/ws) are proxied automatically by Caddy.
+	reverse_proxy app:8787
+
+	log {
+		output stdout
+		format console
+	}
+}

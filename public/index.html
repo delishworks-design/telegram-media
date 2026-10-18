@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Media Vault</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <!-- Login -->
+    <section id="login" class="login-wrap hidden">
+      <form class="login-card" id="login-form" autocomplete="on">
+        <h1>Media Vault</h1>
+        <p class="sub">Private media, stored in your own Telegram account.</p>
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" name="username" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required />
+        </div>
+        <button class="btn primary" style="width: 100%" type="submit">Sign in</button>
+        <p id="login-error" class="hint" style="color: var(--danger); min-height: 18px"></p>
+      </form>
+    </section>
+
+    <!-- App -->
+    <div id="app" class="hidden">
+      <header class="topbar">
+        <h1 class="wordmark">Media Vault<small id="storage-line">Telegram-backed storage</small></h1>
+        <div class="spacer"></div>
+        <span class="who" id="who"></span>
+        <a class="linkish" href="/watch.html">Watch Together</a>
+        <button class="linkish" id="sessions-btn" type="button">Sessions</button>
+        <button class="linkish" id="logout-btn" type="button">Sign out</button>
+      </header>
+
+      <main>
+        <div id="strip" class="strip hidden"></div>
+
+        <!-- Setup wizard -->
+        <section id="wizard" class="wizard hidden" aria-labelledby="wizard-title">
+          <h2 id="wizard-title">Connect Telegram</h2>
+          <p>
+            Credentials go straight to this server. The session is encrypted at rest and never reaches the browser.
+          </p>
+          <div class="steps" id="wizard-steps">Step 1 of 3 — API credentials</div>
+
+          <div id="wizard-step-1">
+            <div class="field">
+              <label for="tg-phone">Phone number</label>
+              <input id="tg-phone" placeholder="+15551234567" autocomplete="off" />
+              <span class="hint">International format. Receives your login code.</span>
+            </div>
+            <details>
+              <summary class="linkish">API ID &amp; hash (only if not set on the server)</summary>
+              <div class="field" style="margin-top: 10px">
+                <label for="tg-api-id">API ID</label>
+                <input id="tg-api-id" inputmode="numeric" placeholder="1234567" />
+              </div>
+              <div class="field">
+                <label for="tg-api-hash">API hash</label>
+                <input id="tg-api-hash" type="password" placeholder="from my.telegram.org" />
+              </div>
+            </details>
+            <button class="btn primary" id="tg-start" type="button">Send code</button>
+          </div>
+
+          <div id="wizard-step-2" class="hidden">
+            <div class="field">
+              <label for="tg-code">Login code</label>
+              <input id="tg-code" inputmode="numeric" autocomplete="one-time-code" />
+            </div>
+            <div class="field hidden" id="tg-pw-field">
+              <label for="tg-password">Two-step password</label>
+              <input id="tg-password" type="password" autocomplete="current-password" />
+            </div>
+            <button class="btn primary" id="tg-submit" type="button">Verify</button>
+          </div>
+
+          <div id="wizard-step-3" class="hidden">
+            <div class="field">
+              <label for="tg-channel">Storage channel</label>
+              <input id="tg-channel" placeholder="@my_channel or -1001234567890" />
+              <span class="hint">Leave blank to create a new private channel automatically.</span>
+            </div>
+            <button class="btn primary" id="tg-channel-save" type="button">Finish setup</button>
+          </div>
+
+          <p id="wizard-error" class="hint" style="color: var(--danger); min-height: 18px"></p>
+        </section>
+
+        <!-- Library + upload -->
+        <section id="library" class="hidden">
+          <div class="toolbar">
+            <div class="search">
+              <label class="visually-hidden" for="search-input">Search filenames</label>
+              <input id="search-input" type="search" placeholder="Search filenames" autocomplete="off" />
+            </div>
+            <select id="category" class="btn" aria-label="Filter by type">
+              <option value="">All types</option>
+              <option value="video">Video</option>
+              <option value="audio">Audio</option>
+              <option value="image">Image</option>
+              <option value="other">Other</option>
+            </select>
+            <select id="sort" class="btn" aria-label="Sort">
+              <option value="date_desc">Newest</option>
+              <option value="date_asc">Oldest</option>
+              <option value="name_asc">Name A–Z</option>
+              <option value="size_desc">Largest</option>
+            </select>
+            <div class="seg" role="group" aria-label="View">
+              <button id="view-grid" type="button" aria-pressed="true">Grid</button>
+              <button id="view-list" type="button" aria-pressed="false">List</button>
+            </div>
+            <button class="btn primary" id="choose-btn" type="button">Upload</button>
+            <input id="file-input" type="file" multiple class="visually-hidden" />
+          </div>
+
+          <div class="drop" id="drop">
+            <p><strong>Drop files here</strong> to store them in Telegram</p>
+            <p class="sub">Nothing is written to this app's disk once the upload finishes.</p>
+            <p class="sub"><button class="btn small" id="drop-choose" type="button">Choose from device</button></p>
+          </div>
+
+          <section id="queue" class="queue hidden" aria-label="Upload queue">
+            <h2>Upload queue</h2>
+            <div id="queue-body"></div>
+          </section>
+
+          <p class="meta-line" id="meta-line"></p>
+          <div id="library-body"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toasts" aria-live="polite"></div>
+    <div id="modal-root"></div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
