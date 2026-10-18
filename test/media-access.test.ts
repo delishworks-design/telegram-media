@@ -19,9 +19,9 @@ describe("media library access control and CRUD", () => {
   });
 
   test("listing, search and category filter", async () => {
-    seedMedia(ctx, "holiday.mp4", "video/mp4", Buffer.from("aaaa"));
-    seedMedia(ctx, "song.mp3", "audio/mpeg", Buffer.from("bbbb"));
-    seedMedia(ctx, "poster.png", "image/png", Buffer.from("cccc"));
+    await seedMedia(ctx, "holiday.mp4", "video/mp4", Buffer.from("aaaa"));
+    await seedMedia(ctx, "song.mp3", "audio/mpeg", Buffer.from("bbbb"));
+    await seedMedia(ctx, "poster.png", "image/png", Buffer.from("cccc"));
 
     const all = await ctx.client.json<{ total: number }>("/api/media");
     assert.ok(all.body.total >= 3);
@@ -35,7 +35,7 @@ describe("media library access control and CRUD", () => {
   });
 
   test("rename updates the display name", async () => {
-    const { id } = seedMedia(ctx, "old-name.bin", "application/octet-stream", Buffer.from("x"));
+    const { id } = await seedMedia(ctx, "old-name.bin", "application/octet-stream", Buffer.from("x"));
     const res = await ctx.client.json<{ item: { name: string } }>(`/api/media/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -46,7 +46,7 @@ describe("media library access control and CRUD", () => {
   });
 
   test("rename rejects an empty name", async () => {
-    const { id } = seedMedia(ctx, "keep.bin", "application/octet-stream", Buffer.from("x"));
+    const { id } = await seedMedia(ctx, "keep.bin", "application/octet-stream", Buffer.from("x"));
     const res = await ctx.client.json(`/api/media/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -56,7 +56,7 @@ describe("media library access control and CRUD", () => {
   });
 
   test("delete with telegram=false keeps the Telegram file", async () => {
-    const { id, stored } = seedMedia(ctx, "keep-in-tg.bin", "application/octet-stream", Buffer.from("x"));
+    const { id, stored } = await seedMedia(ctx, "keep-in-tg.bin", "application/octet-stream", Buffer.from("x"));
     const res = await ctx.client.json<{ telegramDeleted: boolean }>(`/api/media/${id}?telegram=false`, {
       method: "DELETE",
     });
@@ -67,7 +67,7 @@ describe("media library access control and CRUD", () => {
   });
 
   test("delete with telegram=true removes the Telegram file and explains it", async () => {
-    const { id, stored } = seedMedia(ctx, "delete-in-tg.bin", "application/octet-stream", Buffer.from("x"));
+    const { id, stored } = await seedMedia(ctx, "delete-in-tg.bin", "application/octet-stream", Buffer.from("x"));
     const res = await ctx.client.json<{ telegramDeleted: boolean; explanation: string; deleted: boolean }>(
       `/api/media/${id}`,
       { method: "DELETE" },

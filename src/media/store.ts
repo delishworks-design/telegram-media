@@ -32,8 +32,8 @@ export interface MessageRef {
 
 export interface MediaStore {
   readonly kind: string;
-  /** True when the store can accept uploads and serve reads. */
-  ready(): boolean;
+  /** Resolves true when the store can accept uploads and serve reads. */
+  ready(): Promise<boolean>;
   upload(input: UploadInput): Promise<StoredMedia>;
   /** Yields buffers for the inclusive byte range [start, end]. */
   readRange(ref: MessageRef, start: number, end: number, signal?: AbortSignal): AsyncIterable<Buffer>;

@@ -1,5 +1,5 @@
 import type { Request, RequestHandler, Response } from "express";
-import type { Database } from "../db/index.js";
+import type { Db } from "../db/index.js";
 import { SESSION_COOKIE, verifySession, type AuthenticatedSession } from "./sessions.js";
 
 export function readSessionToken(req: Request): string | undefined {
@@ -15,14 +15,17 @@ export function currentUser(res: Response): AuthenticatedSession | undefined {
 }
 
 // Rejects the request unless a valid, unrevoked, unexpired session is present.
-export function requireAuth(db: Database): RequestHandler {
+export function requireAuth(db: Db): RequestHandler {
   return (req, res, next) => {
-    const session = verifySession(db, readSessionToken(req));
-    if (!session) {
-      res.status(401).json({ error: "unauthorized" });
-      return;
-    }
-    (res.locals as { user?: AuthenticatedSession }).user = session;
-    next();
+    verifySession(db, readSessionToken(req))
+      .then((session) => {
+        if (!session) {
+          res.status(401).json({ error: "unauthorized" });
+          return;
+        }
+        (res.locals as { user?: AuthenticatedSession }).user = session;
+        next();
+      })
+      .catch(next);
   };
 }

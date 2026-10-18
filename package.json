@@ -21,6 +21,7 @@
     "big-integer": "^1.6.52",
     "cookie-parser": "^1.4.6",
     "express": "^4.21.0",
+    "pg": "^8.13.1",
     "teleproto": "^1.230.1",
     "ws": "^8.22.0"
   },
@@ -30,7 +31,9 @@
     "@types/cookie-parser": "^1.4.7",
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.0",
+    "@types/pg": "^8.11.10",
     "@types/ws": "^8.18.2",
+    "pg-mem": "^3.0.5",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"
   }

@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { loadEnvFile } from "./util/env.js";
 import { assertProductionConfig, loadConfig } from "./config.js";
-import { openDatabase, closeDatabase } from "./db/index.js";
+import { openDatabase, openPostgres, closeDatabase, type Db } from "./db/index.js";
 import { createLogger } from "./util/logger.js";
 import { purgeExpiredSessions } from "./auth/sessions.js";
 import { TelegramService } from "./telegram/service.js";
@@ -17,10 +17,13 @@ async function main(): Promise<void> {
   assertProductionConfig(config);
 
   const logger = createLogger(config.logLevel);
-  const db = openDatabase(config.databasePath);
+  const db: Db = config.databaseUrl
+    ? await openPostgres(config.databaseUrl)
+    : await openDatabase(config.databasePath);
+  logger.info("database ready", { dialect: db.dialect });
 
   const telegram = new TelegramService(config, db, logger.child({ component: "telegram" }));
-  telegram.seedFromEnv();
+  await telegram.seedFromEnv();
 
   const repo = new MediaRepository(db);
   const uploads = new UploadManager({
@@ -52,12 +55,11 @@ async function main(): Promise<void> {
   });
 
   const purge = setInterval(() => {
-    try {
-      const n = purgeExpiredSessions(db);
-      if (n) logger.debug("purged expired sessions", { count: n });
-    } catch (err) {
-      logger.warn("session purge failed", { error: (err as Error).message });
-    }
+    purgeExpiredSessions(db)
+      .then((n) => {
+        if (n) logger.debug("purged expired sessions", { count: n });
+      })
+      .catch((err) => logger.warn("session purge failed", { error: (err as Error).message }));
   }, 60 * 60 * 1000);
   purge.unref?.();
 
@@ -70,8 +72,7 @@ async function main(): Promise<void> {
     realtime.close();
     void uploads.close().then(() => {
       server.close(() => {
-        closeDatabase(db);
-        process.exit(0);
+        void closeDatabase(db).finally(() => process.exit(0));
       });
     });
     setTimeout(() => process.exit(0), 5000).unref?.();

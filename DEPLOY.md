@@ -60,7 +60,7 @@ node -e "import('./dist/util/crypto.js').then(m=>console.log(m.hashPassword(proc
 Then set, at minimum:
 
 - `DOMAIN`, `EMAIL`
-- `PUBLIC_BASE_URL=https://<anonde>` (matching `DOMAIN`)
+- `PUBLIC_BASE_URL=https://<domain>` (matching `DOMAIN`)
 - `MASTER_KEY`, `PLAYBACK_TOKEN_SECRET`
 - `AUTH_USERS=[{"username":"owner","passwordHash":"..."},{"username":"partner","passwordHash":"..."}]`
 
@@ -125,6 +125,37 @@ docker run --rm -v telegram-media_media-data:/data -v "$PWD":/backup alpine \
 ```
 
 Keep `MASTER_KEY` safe with the backup — the same key is required to read the session.
+
+## Alternative: diskless host (Postgres, no volume)
+
+Some free always-on hosts (e.g. **Northflank free tier**) give you a long-running container
+*and* a managed database, but **no persistent disk**. On those, point the app at Postgres
+instead of SQLite — the app is the same, only the storage backend changes.
+
+1. Create the service from this repo (it builds with the included `Dockerfile`).
+2. Provision the host's managed **PostgreSQL** and copy its connection string.
+3. Set these environment variables:
+
+   ```
+   DATABASE_URL=postgres://user:password@host:5432/dbname?sslmode=require
+   PUBLIC_BASE_URL=https://<your-app-host>
+   COOKIE_SECURE=true
+   MASTER_KEY=<32-byte base64>
+   PLAYBACK_TOKEN_SECRET=<32-byte base64>
+   AUTH_USERS=[{"username":"owner","passwordHash":"..."},{"username":"partner","passwordHash":"..."}]
+   ```
+
+   `DATABASE_URL` overrides `DATABASE_PATH`; `UPLOAD_TMP_DIR` can stay on the ephemeral disk
+   (uploads are streamed straight to Telegram and deleted afterwards). `DATABASE_SSL` is
+   optional (`require`/`disable`); it defaults to `require` for non-local hosts.
+
+4. Expose the container's HTTP port and make sure the host forwards **WebSocket upgrades**
+   (Watch Together needs them — keep the tunnel/proxy in Full-strict mode with WS enabled).
+5. Verify `GET /healthz` returns `{"ok":true}` and the library loads after login.
+
+The schema is created automatically on first boot (same migrations as SQLite). Switching
+between SQLite and Postgres needs no code change and no data migration beyond re-running the
+Telegram login (or restoring the `telegram_session` row).
 
 ## Troubleshooting
 

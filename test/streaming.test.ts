@@ -10,7 +10,7 @@ let mediaId = "";
 before(async () => {
   ctx = await buildTestContext();
   await ctx.client.login();
-  mediaId = seedMedia(ctx, "movie.mp4", "video/mp4", CONTENT).id;
+  mediaId = (await seedMedia(ctx, "movie.mp4", "video/mp4", CONTENT)).id;
 });
 after(async () => {
   await ctx.close();
@@ -110,7 +110,7 @@ describe("signed playback tokens (Watch Together integration)", () => {
   });
 
   test("a token for one file cannot stream another", async () => {
-    const other = seedMedia(ctx, "other.mp4", "video/mp4", Buffer.from("other-file-bytes")).id;
+    const other = (await seedMedia(ctx, "other.mp4", "video/mp4", Buffer.from("other-file-bytes"))).id;
     const tokenRes = await ctx.client.json<{ token: string }>(`/api/media/${mediaId}/playback-token`, {
       method: "POST",
       headers: { "content-type": "application/json" },

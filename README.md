@@ -31,7 +31,7 @@ below if you ever want to bolt this onto a different frontend.
 ## Architecture
 
 ```
-browser  ──cookie session──►  Express API        ──► SQLite (metadata only)
+browser  ──cookie session──►  Express API        ──► SQLite or Postgres (metadata only)
    │                            auth · telegram setup · uploads (resumable)
    │                            media CRUD · streaming (HTTP 206) · signed tokens
    │
@@ -44,8 +44,8 @@ browser  ──cookie session──►  Express API        ──► SQLite (met
 
 - **Secrets never reach the browser.** The MTProto session string and API hash are
   AES-256-GCM encrypted at rest; the browser only ever sees booleans and filenames.
-- **No video binaries in any database.** Only metadata lives in SQLite. The bytes live in a
-  Telegram channel you own.
+- **No video binaries in any database.** Only metadata lives in SQLite or Postgres (see
+  `DATABASE_URL`). The bytes live in a Telegram channel you own.
 - **MTProto, not the Bot API.** Bots cannot read arbitrary history or stream your own files;
   a user session can. Uses the actively maintained `teleproto` fork of GramJS.
 - **Self-hosted signalling.** The server relays WebRTC offers/answers/ICE and owns the
@@ -117,7 +117,8 @@ See [`.env.example`](./.env.example) for the full list with placeholders. The re
 | `PLAYBACK_TOKEN_SECRET` | 32-byte base64 HMAC key for signed playback URLs. |
 | `AUTH_USERS` | JSON array of `{username,passwordHash}`. Exactly your two users. |
 | `PUBLIC_BASE_URL` / `COOKIE_SECURE` | Origin and cookie security behind HTTPS. |
-| `DATABASE_PATH` / `UPLOAD_TMP_DIR` | Persistent paths for metadata and in-flight chunks. |
+| `DATABASE_PATH` / `UPLOAD_TMP_DIR` | Persistent paths for metadata and in-flight chunks (local/VM). |
+| `DATABASE_URL` | Postgres URL. When set, overrides `DATABASE_PATH` — use on diskless hosts. |
 | `MAX_UPLOAD_BYTES` / `CHUNK_SIZE_BYTES` | Upload limits and resumable chunk size. |
 
 There are **no default passwords** and **no committed secrets**; `.gitignore` excludes
@@ -195,7 +196,7 @@ pnpm build
 Results (this workspace, aarch64 / Node 20.19):
 
 ```
-# tests 51   # pass 51   # fail 0
+# tests 58   # pass 58   # fail 0
 ```
 
 Covered: authentication (login, wrong password, unknown user, cookie flags, logout,
@@ -207,9 +208,10 @@ suffix ranges, 416, HEAD, ETag/304); signed playback tokens (cookie-free 206, cr
 token rejected); the room manager (create/join/leave, empty-room sweep, media reset,
 sequence + position clamping, clock-driven position); and the realtime layer over a real
 WebSocket (unauthenticated upgrade rejected, welcome payload, peer join/leave, playback and
-media broadcast, late-joiner state, targeted signalling relay, rooms REST API). A
-compiled-server smoke test (spawn `dist/index.js`, log in, fetch `/watch.html`, create a
-room, complete a WebSocket handshake, reject a bad cookie) also passes.
+media broadcast, late-joiner state, targeted signalling relay, rooms REST API); and the
+Postgres driver (placeholder translation, migrations, sessions/media/config round-trips via
+`pg-mem`). A compiled-server smoke test (spawn `dist/index.js`, log in, fetch `/watch.html`,
+create a room, complete a WebSocket handshake, reject a bad cookie) also passes.
 
 ## Deployment
 
@@ -280,4 +282,4 @@ this automatically; with nginx add `proxy_set_header Upgrade $http_upgrade;` and
    player shows a clear message and an Open/download fallback. We stream bytes; we do not
    transcode.
 9. **Single-node.** Sessions, the upload queue, rooms and rate limits are per-process.
-   SQLite is fine for two users; there is no clustering.
+   SQLite (or a single Postgres) is fine for two users; there is no clustering.

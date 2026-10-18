@@ -14,9 +14,9 @@ async function main(): Promise<void> {
   if (config.masterKey.equals(Buffer.alloc(32))) {
     throw new Error("MASTER_KEY must be set before logging in (it encrypts the session at rest)");
   }
-  const db = openDatabase(config.databasePath);
+  const db = await openDatabase(config.databasePath);
   const service = new TelegramService(config, db, createLogger("info").child({ component: "cli" }));
-  service.seedFromEnv();
+  await service.seedFromEnv();
 
   const rl = createInterface({ input: stdin, output: stdout });
   try {
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
     stdout.write(`\nSigned in. Storage channel: ${resolved.title ?? "(untitled)"} [${resolved.id}]\n`);
   } finally {
     rl.close();
-    closeDatabase(db);
+    await closeDatabase(db);
   }
 }
 

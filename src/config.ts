@@ -28,6 +28,7 @@ export interface AppConfig {
     channelTitle: string;
   };
 
+  databaseUrl?: string;
   databasePath: string;
   uploadTmpDir: string;
   maxUploadBytes: number;
@@ -132,6 +133,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       channelTitle: env.TELEGRAM_CHANNEL_TITLE || "Media Vault",
     },
 
+    databaseUrl: env.DATABASE_URL?.trim() || undefined,
     databasePath: resolve(env.DATABASE_PATH ?? "./data/media.sqlite"),
     uploadTmpDir: resolve(env.UPLOAD_TMP_DIR ?? "./tmp/uploads"),
     maxUploadBytes: num(env, "MAX_UPLOAD_BYTES", 2 * 1024 * 1024 * 1024),

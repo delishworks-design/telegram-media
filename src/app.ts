@@ -2,7 +2,7 @@ import { fileURLToPath } from "node:url";
 import cookieParser from "cookie-parser";
 import express, { type NextFunction, type Request, type Response } from "express";
 import type { AppConfig } from "./config.js";
-import type { Database } from "./db/index.js";
+import type { Db } from "./db/index.js";
 import type { Logger } from "./util/logger.js";
 import type { MediaStore } from "./media/store.js";
 import type { TelegramBackend } from "./telegram/types.js";
@@ -19,7 +19,7 @@ import { HttpError } from "./routes/helpers.js";
 
 export interface AppDeps {
   config: AppConfig;
-  db: Database;
+  db: Db;
   logger: Logger;
   store: MediaStore;
   telegram: TelegramBackend;

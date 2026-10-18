@@ -1,3 +1,5 @@
+import type { Db } from "./index.js";
+
 export interface Migration {
   id: number;
   name: string;
@@ -5,7 +7,9 @@ export interface Migration {
 }
 
 // Migrations are embedded (not read from disk) so a compiled dist/ build is
-// self-contained. Each runs once, in order, inside a transaction.
+// self-contained. Each runs once, in order, inside a transaction. The SQL is
+// written to be valid on both SQLite and PostgreSQL: timestamps and byte sizes
+// use BIGINT so 64-bit epoch millis never overflow Postgres INTEGER.
 export const MIGRATIONS: Migration[] = [
   {
     id: 1,
@@ -16,10 +20,10 @@ export const MIGRATIONS: Migration[] = [
         id           TEXT PRIMARY KEY,
         token_hash   TEXT NOT NULL UNIQUE,
         username     TEXT NOT NULL,
-        created_at   INTEGER NOT NULL,
-        expires_at   INTEGER NOT NULL,
-        revoked_at   INTEGER,
-        last_seen_at INTEGER,
+        created_at   BIGINT NOT NULL,
+        expires_at   BIGINT NOT NULL,
+        revoked_at   BIGINT,
+        last_seen_at BIGINT,
         user_agent   TEXT,
         ip           TEXT
       );
@@ -35,21 +39,21 @@ export const MIGRATIONS: Migration[] = [
         channel_id       TEXT,
         channel_title    TEXT,
         channel_access_hash TEXT,
-        updated_at       INTEGER NOT NULL
+        updated_at       BIGINT NOT NULL
       );
 
       -- Single-row encrypted MTProto session string.
       CREATE TABLE telegram_session (
         id          INTEGER PRIMARY KEY CHECK (id = 1),
         session_enc TEXT NOT NULL,
-        updated_at  INTEGER NOT NULL
+        updated_at  BIGINT NOT NULL
       );
 
       -- Pending interactive login state (phoneCodeHash etc.), sealed at rest.
       CREATE TABLE telegram_login (
         id          TEXT PRIMARY KEY,
         state_enc   TEXT NOT NULL,
-        updated_at  INTEGER NOT NULL
+        updated_at  BIGINT NOT NULL
       );
 
       -- Media library metadata. No binaries — those live in Telegram.
@@ -57,21 +61,21 @@ export const MIGRATIONS: Migration[] = [
         id             TEXT PRIMARY KEY,
         name           TEXT NOT NULL,
         search_name    TEXT NOT NULL,
-        size           INTEGER NOT NULL,
+        size           BIGINT NOT NULL,
         mime           TEXT NOT NULL,
         duration       REAL,
         width          INTEGER,
         height         INTEGER,
-        message_id     INTEGER NOT NULL,
+        message_id     BIGINT NOT NULL,
         channel_id     TEXT NOT NULL,
         file_reference TEXT,
         thumb_reference TEXT,
-        thumb_message_id INTEGER,
+        thumb_message_id BIGINT,
         status         TEXT NOT NULL DEFAULT 'ready',
         error          TEXT,
         created_by     TEXT,
-        uploaded_at    INTEGER NOT NULL,
-        updated_at     INTEGER NOT NULL
+        uploaded_at    BIGINT NOT NULL,
+        updated_at     BIGINT NOT NULL
       );
       CREATE INDEX idx_media_search ON media(search_name);
       CREATE INDEX idx_media_uploaded ON media(uploaded_at DESC);
@@ -80,9 +84,9 @@ export const MIGRATIONS: Migration[] = [
       CREATE TABLE uploads (
         id          TEXT PRIMARY KEY,
         name        TEXT NOT NULL,
-        size        INTEGER NOT NULL,
+        size        BIGINT NOT NULL,
         mime        TEXT NOT NULL,
-        received    INTEGER NOT NULL DEFAULT 0,
+        received    BIGINT NOT NULL DEFAULT 0,
         expected_chunks INTEGER,
         status      TEXT NOT NULL,
         error       TEXT,
@@ -90,15 +94,15 @@ export const MIGRATIONS: Migration[] = [
         tmp_path    TEXT,
         created_by  TEXT,
         attempts    INTEGER NOT NULL DEFAULT 0,
-        created_at  INTEGER NOT NULL,
-        updated_at  INTEGER NOT NULL
+        created_at  BIGINT NOT NULL,
+        updated_at  BIGINT NOT NULL
       );
       CREATE INDEX idx_uploads_status ON uploads(status);
 
       CREATE TABLE upload_chunks (
         upload_id TEXT NOT NULL,
         idx       INTEGER NOT NULL,
-        size      INTEGER NOT NULL,
+        size      BIGINT NOT NULL,
         PRIMARY KEY (upload_id, idx),
         FOREIGN KEY (upload_id) REFERENCES uploads(id) ON DELETE CASCADE
       );
@@ -106,29 +110,23 @@ export const MIGRATIONS: Migration[] = [
   },
 ];
 
-export function applyMigrations(db: {
-  exec(sql: string): unknown;
-  prepare(sql: string): { get(...args: unknown[]): unknown; run(...args: unknown[]): unknown };
-}): number {
-  db.exec(`CREATE TABLE IF NOT EXISTS _migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at INTEGER NOT NULL)`);
-  const has = db.prepare(`SELECT id FROM _migrations WHERE id = ?`);
+export async function applyMigrations(db: Db): Promise<number> {
+  await db.exec(
+    `CREATE TABLE IF NOT EXISTS _migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at BIGINT NOT NULL)`,
+  );
   let applied = 0;
   for (const m of MIGRATIONS) {
-    if (has.get(m.id)) continue;
-    db.exec("BEGIN");
-    try {
-      db.exec(m.sql);
-      db.prepare(`INSERT INTO _migrations (id, name, applied_at) VALUES (?, ?, ?)`).run(
+    const existing = await db.get(`SELECT id FROM _migrations WHERE id = ?`, [m.id]);
+    if (existing) continue;
+    await db.transaction(async (tx) => {
+      await tx.exec(m.sql);
+      await tx.run(`INSERT INTO _migrations (id, name, applied_at) VALUES (?, ?, ?)`, [
         m.id,
         m.name,
         Date.now(),
-      );
-      db.exec("COMMIT");
-      applied++;
-    } catch (err) {
-      db.exec("ROLLBACK");
-      throw err;
-    }
+      ]);
+    });
+    applied++;
   }
   return applied;
 }

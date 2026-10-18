@@ -2,13 +2,13 @@ import type { IncomingMessage, Server as HttpServer } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { randomToken } from "../util/crypto.js";
 import { SESSION_COOKIE, verifySession, type AuthenticatedSession } from "../auth/sessions.js";
-import type { Database } from "../db/index.js";
+import type { Db } from "../db/index.js";
 import type { Logger } from "../util/logger.js";
 import { currentPosition, RoomManager } from "./rooms.js";
 import { decode, encode, type ServerMessage } from "./protocol.js";
 
 export interface RealtimeDeps {
-  db: Database;
+  db: Db;
   logger: Logger;
   rooms: RoomManager;
 }
@@ -37,15 +37,20 @@ export function attachRealtime(server: HttpServer, deps: RealtimeDeps): { close(
       return;
     }
     const token = parseCookies(req.headers.cookie)[SESSION_COOKIE];
-    const session = verifySession(db, token);
-    if (!session) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-      socket.destroy();
-      return;
-    }
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      handleConnection(ws, req, session, url);
-    });
+    verifySession(db, token)
+      .then((session) => {
+        if (!session) {
+          socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          handleConnection(ws, req, session, url);
+        });
+      })
+      .catch(() => {
+        socket.destroy();
+      });
   });
 
   function handleConnection(ws: WebSocket, _req: IncomingMessage, session: AuthenticatedSession, url: URL): void {

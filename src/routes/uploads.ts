@@ -10,29 +10,35 @@ export function uploadRoutes(deps: AppDeps): Router {
   router.use("/api/uploads", requireAuth(db));
 
   // Server-sent events: live progress for the whole queue.
-  router.get("/api/uploads/events", (req, res) => {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders?.();
+  router.get(
+    "/api/uploads/events",
+    asyncHandler(async (req, res) => {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders?.();
 
-    const send = (event: unknown) => {
-      res.write(`data: ${JSON.stringify(event)}\n\n`);
-    };
-    send({ type: "hello", records: uploads.list() });
+      const send = (event: unknown) => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      };
+      send({ type: "hello", records: await uploads.list() });
 
-    const unsubscribe = uploads.subscribe(send);
-    const ping = setInterval(() => res.write(`: ping\n\n`), 20000);
-    req.on("close", () => {
-      clearInterval(ping);
-      unsubscribe();
-    });
-  });
+      const unsubscribe = uploads.subscribe(send);
+      const ping = setInterval(() => res.write(`: ping\n\n`), 20000);
+      req.on("close", () => {
+        clearInterval(ping);
+        unsubscribe();
+      });
+    }),
+  );
 
-  router.get("/api/uploads", (_req, res) => {
-    res.json({ items: uploads.list() });
-  });
+  router.get(
+    "/api/uploads",
+    asyncHandler(async (_req, res) => {
+      res.json({ items: await uploads.list() });
+    }),
+  );
 
   router.post(
     "/api/uploads",
@@ -66,27 +72,39 @@ export function uploadRoutes(deps: AppDeps): Router {
     }),
   );
 
-  router.post("/api/uploads/:id/complete", asyncHandler(async (req, res) => {
-    res.json({ upload: await uploads.finalize(req.params.id!) });
-  }));
+  router.post(
+    "/api/uploads/:id/complete",
+    asyncHandler(async (req, res) => {
+      res.json({ upload: await uploads.finalize(req.params.id!) });
+    }),
+  );
 
-  router.get("/api/uploads/:id", (req, res) => {
-    const record = uploads.get(req.params.id!);
-    if (!record) throw notFound("Upload not found");
-    res.json({ upload: record });
-  });
+  router.get(
+    "/api/uploads/:id",
+    asyncHandler(async (req, res) => {
+      const record = await uploads.get(req.params.id!);
+      if (!record) throw notFound("Upload not found");
+      res.json({ upload: record });
+    }),
+  );
 
-  router.delete("/api/uploads/:id", (req, res) => {
-    const record = uploads.cancel(req.params.id!);
-    if (!record) throw notFound("Upload not found");
-    res.json({ upload: record });
-  });
+  router.delete(
+    "/api/uploads/:id",
+    asyncHandler(async (req, res) => {
+      const record = await uploads.cancel(req.params.id!);
+      if (!record) throw notFound("Upload not found");
+      res.json({ upload: record });
+    }),
+  );
 
-  router.post("/api/uploads/:id/retry", (req, res) => {
-    const record = uploads.retry(req.params.id!);
-    if (!record) throw notFound("Upload not found");
-    res.json({ upload: record });
-  });
+  router.post(
+    "/api/uploads/:id/retry",
+    asyncHandler(async (req, res) => {
+      const record = await uploads.retry(req.params.id!);
+      if (!record) throw notFound("Upload not found");
+      res.json({ upload: record });
+    }),
+  );
 
   return router;
 }

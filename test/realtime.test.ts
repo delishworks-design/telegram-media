@@ -87,7 +87,7 @@ test("playback and media updates broadcast to the room", async () => {
   const welcomeB = await b.expect("welcome");
   const selfB = welcomeB.selfId as string;
 
-  const { id: mediaId } = seedMedia(ctx, "film.mp4", "video/mp4", Buffer.from("hello"));
+  const { id: mediaId } = await seedMedia(ctx, "film.mp4", "video/mp4", Buffer.from("hello"));
   a.send({ type: "media", mediaId });
   const mediaMsg = await b.expect("media", (m) => m.mediaId === mediaId);
   assert.equal((mediaMsg.playback as { mediaId: string }).mediaId, mediaId);
@@ -149,7 +149,7 @@ test("signalling messages are relayed only to the target peer", async () => {
 
 test("rooms REST API creates, reads and lists rooms", async () => {
   const ctx = await loggedInContext();
-  const { id } = seedMedia(ctx, "clip.mp4", "video/mp4", Buffer.from("x"));
+  const { id } = await seedMedia(ctx, "clip.mp4", "video/mp4", Buffer.from("x"));
   const created = await ctx.client.json<{ id: string; room: { playback: { mediaId: string } } }>("/api/rooms", {
     method: "POST",
     headers: { "content-type": "application/json" },

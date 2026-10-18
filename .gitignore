@@ -8,6 +8,7 @@ tmp/
 .env
 .env.*
 !.env.example
+!.env.production.example
 *.session
 *.session-journal
 *.sqlite

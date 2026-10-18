@@ -5,7 +5,7 @@ import { computeCheck } from "teleproto/Password.js";
 import { CustomFile } from "teleproto/client/uploads.js";
 import { randomToken, SecretBox } from "../util/crypto.js";
 import type { AppConfig } from "../config.js";
-import type { Database } from "../db/index.js";
+import type { Db } from "../db/index.js";
 import type { Logger } from "../util/logger.js";
 import type {
   MediaStore,
@@ -79,7 +79,7 @@ export class TelegramService implements TelegramBackend, MediaStore {
 
   constructor(
     private readonly config: AppConfig,
-    private readonly db: Database,
+    private readonly db: Db,
     private readonly logger: Logger,
   ) {
     this.streamChunkBytes = clampRequestSize(config.streamChunkBytes);
@@ -87,21 +87,21 @@ export class TelegramService implements TelegramBackend, MediaStore {
 
   // --- configuration persistence -------------------------------------------
 
-  private configRow(): ConfigRow | undefined {
-    return this.db
-      .prepare("SELECT api_id, api_hash_enc, phone, channel_id, channel_title, channel_access_hash FROM telegram_config WHERE id = 1")
-      .get() as ConfigRow | undefined;
+  private async configRow(): Promise<ConfigRow | undefined> {
+    return this.db.get<ConfigRow>(
+      "SELECT api_id, api_hash_enc, phone, channel_id, channel_title, channel_access_hash FROM telegram_config WHERE id = 1",
+    );
   }
 
-  private upsertConfig(patch: Partial<{
+  private async upsertConfig(patch: Partial<{
     apiId: number;
     apiHashEnc: string;
     phone: string;
     channelId: string;
     channelTitle: string;
     channelAccessHash: string;
-  }>): void {
-    const current = this.configRow();
+  }>): Promise<void> {
+    const current = await this.configRow();
     const next = {
       api_id: patch.apiId ?? current?.api_id ?? null,
       api_hash_enc: patch.apiHashEnc ?? current?.api_hash_enc ?? null,
@@ -110,20 +110,19 @@ export class TelegramService implements TelegramBackend, MediaStore {
       channel_title: patch.channelTitle ?? current?.channel_title ?? null,
       channel_access_hash: patch.channelAccessHash ?? current?.channel_access_hash ?? null,
     };
-    this.db
-      .prepare(
-        `INSERT INTO telegram_config (id, api_id, api_hash_enc, phone, channel_id, channel_title, channel_access_hash, updated_at)
-         VALUES (1, @api_id, @api_hash_enc, @phone, @channel_id, @channel_title, @channel_access_hash, @updated_at)
-         ON CONFLICT(id) DO UPDATE SET
-           api_id=@api_id, api_hash_enc=@api_hash_enc, phone=@phone,
-           channel_id=@channel_id, channel_title=@channel_title,
-           channel_access_hash=@channel_access_hash, updated_at=@updated_at`,
-      )
-      .run({ ...next, updated_at: Date.now() });
+    await this.db.run(
+      `INSERT INTO telegram_config (id, api_id, api_hash_enc, phone, channel_id, channel_title, channel_access_hash, updated_at)
+       VALUES (1, @api_id, @api_hash_enc, @phone, @channel_id, @channel_title, @channel_access_hash, @updated_at)
+       ON CONFLICT(id) DO UPDATE SET
+         api_id=@api_id, api_hash_enc=@api_hash_enc, phone=@phone,
+         channel_id=@channel_id, channel_title=@channel_title,
+         channel_access_hash=@channel_access_hash, updated_at=@updated_at`,
+      { ...next, updated_at: Date.now() },
+    );
   }
 
-  private resolvedCredentials(): { apiId: number; apiHash: string } {
-    const row = this.configRow();
+  private async resolvedCredentials(): Promise<{ apiId: number; apiHash: string }> {
+    const row = await this.configRow();
     const apiId = row?.api_id ?? this.config.telegram.apiId;
     let apiHash: string | undefined;
     if (row?.api_hash_enc) {
@@ -139,10 +138,10 @@ export class TelegramService implements TelegramBackend, MediaStore {
     return new SecretBox(this.config.masterKey).subkey("telegram");
   }
 
-  private getStoredSession(): string {
-    const row = this.db.prepare("SELECT session_enc FROM telegram_session WHERE id = 1").get() as
-      | { session_enc: string }
-      | undefined;
+  private async getStoredSession(): Promise<string> {
+    const row = await this.db.get<{ session_enc: string }>(
+      "SELECT session_enc FROM telegram_session WHERE id = 1",
+    );
     if (!row) return "";
     try {
       return this.masterBox().open(row.session_enc, "session");
@@ -152,32 +151,31 @@ export class TelegramService implements TelegramBackend, MediaStore {
     }
   }
 
-  private saveSession(session: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO telegram_session (id, session_enc, updated_at) VALUES (1, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET session_enc=excluded.session_enc, updated_at=excluded.updated_at`,
-      )
-      .run(this.masterBox().seal(session, "session"), Date.now());
+  private async saveSession(session: string): Promise<void> {
+    await this.db.run(
+      `INSERT INTO telegram_session (id, session_enc, updated_at) VALUES (1, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET session_enc=excluded.session_enc, updated_at=excluded.updated_at`,
+      [this.masterBox().seal(session, "session"), Date.now()],
+    );
   }
 
-  private clearSession(): void {
-    this.db.prepare("DELETE FROM telegram_session WHERE id = 1").run();
+  private async clearSession(): Promise<void> {
+    await this.db.run("DELETE FROM telegram_session WHERE id = 1");
   }
 
-  private saveLoginState(id: string, state: LoginState): void {
-    this.db
-      .prepare(
-        `INSERT INTO telegram_login (id, state_enc, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET state_enc=excluded.state_enc, updated_at=excluded.updated_at`,
-      )
-      .run(id, this.masterBox().seal(JSON.stringify(state), "login"), Date.now());
+  private async saveLoginState(id: string, state: LoginState): Promise<void> {
+    await this.db.run(
+      `INSERT INTO telegram_login (id, state_enc, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET state_enc=excluded.state_enc, updated_at=excluded.updated_at`,
+      [id, this.masterBox().seal(JSON.stringify(state), "login"), Date.now()],
+    );
   }
 
-  private loadLoginState(id: string): LoginState | null {
-    const row = this.db.prepare("SELECT state_enc FROM telegram_login WHERE id = ?").get(id) as
-      | { state_enc: string }
-      | undefined;
+  private async loadLoginState(id: string): Promise<LoginState | null> {
+    const row = await this.db.get<{ state_enc: string }>(
+      "SELECT state_enc FROM telegram_login WHERE id = ?",
+      [id],
+    );
     if (!row) return null;
     try {
       return JSON.parse(this.masterBox().open(row.state_enc, "login")) as LoginState;
@@ -186,22 +184,22 @@ export class TelegramService implements TelegramBackend, MediaStore {
     }
   }
 
-  private clearLoginState(id: string): void {
-    this.db.prepare("DELETE FROM telegram_login WHERE id = ?").run(id);
+  private async clearLoginState(id: string): Promise<void> {
+    await this.db.run("DELETE FROM telegram_login WHERE id = ?", [id]);
   }
 
   // Seed from env on first boot (idempotent).
-  seedFromEnv(): void {
-    const row = this.configRow();
+  async seedFromEnv(): Promise<void> {
+    const row = await this.configRow();
     if (row) return;
     const { apiId, apiHash, phone, channel, channelTitle } = this.config.telegram;
     if (apiId && apiHash) {
-      this.upsertConfig({ apiId, apiHashEnc: this.masterBox().seal(apiHash, "api-hash") });
+      await this.upsertConfig({ apiId, apiHashEnc: this.masterBox().seal(apiHash, "api-hash") });
     }
     if (phone || channel || channelTitle) {
-      this.upsertConfig({ phone, channelTitle });
+      await this.upsertConfig({ phone, channelTitle });
     }
-    if (channel) this.upsertConfig({ channelId: channel });
+    if (channel) await this.upsertConfig({ channelId: channel });
   }
 
   // --- client lifecycle -----------------------------------------------------
@@ -211,8 +209,8 @@ export class TelegramService implements TelegramBackend, MediaStore {
     if (this.connecting) return this.connecting;
 
     this.connecting = (async () => {
-      const { apiId, apiHash } = this.resolvedCredentials();
-      const client = new TelegramClient(new StringSession(this.getStoredSession()), apiId, apiHash, {
+      const { apiId, apiHash } = await this.resolvedCredentials();
+      const client = new TelegramClient(new StringSession(await this.getStoredSession()), apiId, apiHash, {
         connectionRetries: 5,
         autoReconnect: true,
         floodSleepThreshold: 120,
@@ -237,8 +235,8 @@ export class TelegramService implements TelegramBackend, MediaStore {
     return client;
   }
 
-  private peer(): Api.InputPeerChannel {
-    const row = this.configRow();
+  private async peer(): Promise<Api.InputPeerChannel> {
+    const row = await this.configRow();
     if (!row?.channel_id) throw new NotConfiguredError("No Telegram storage channel is set");
     return new Api.InputPeerChannel({
       channelId: bigInt(row.channel_id),
@@ -246,13 +244,13 @@ export class TelegramService implements TelegramBackend, MediaStore {
     });
   }
 
-  ready(): boolean {
-    const row = this.configRow();
+  async ready(): Promise<boolean> {
+    const row = await this.configRow();
     return Boolean(row?.channel_id) && Boolean(this.client?.connected);
   }
 
   async getStatus(): Promise<TelegramStatus> {
-    const row = this.configRow();
+    const row = await this.configRow();
     const status: TelegramStatus = {
       configured: Boolean(row?.api_id && row?.api_hash_enc) || Boolean(this.config.telegram.apiId),
       authorized: false,
@@ -293,28 +291,27 @@ export class TelegramService implements TelegramBackend, MediaStore {
     if (!phone || !/^\+?\d{6,15}$/.test(phone.replace(/[\s-]/g, ""))) {
       throw new Error("A valid phone number in international format is required");
     }
-    const apiId = input.apiId ?? this.configRow()?.api_id ?? this.config.telegram.apiId;
+    const cfg = await this.configRow();
+    const apiId = input.apiId ?? cfg?.api_id ?? this.config.telegram.apiId;
     const apiHash =
       input.apiHash ??
-      (this.configRow()?.api_hash_enc
-        ? this.masterBox().open(this.configRow()!.api_hash_enc!, "api-hash")
-        : this.config.telegram.apiHash);
+      (cfg?.api_hash_enc ? this.masterBox().open(cfg.api_hash_enc, "api-hash") : this.config.telegram.apiHash);
     if (!apiId || !apiHash) throw new NotConfiguredError("api id and api hash are required");
 
     if (input.apiId || input.apiHash) {
-      this.upsertConfig({
+      await this.upsertConfig({
         apiId,
         apiHashEnc: this.masterBox().seal(apiHash, "api-hash"),
       });
     }
-    this.upsertConfig({ phone });
+    await this.upsertConfig({ phone });
 
     // A fresh client on the current (probably empty) session.
     if (this.client) {
       await this.client.disconnect().catch(() => undefined);
       this.client = null;
     }
-    const client = new TelegramClient(new StringSession(this.getStoredSession()), apiId, apiHash, {
+    const client = new TelegramClient(new StringSession(await this.getStoredSession()), apiId, apiHash, {
       connectionRetries: 5,
     });
     await client.connect();
@@ -322,13 +319,13 @@ export class TelegramService implements TelegramBackend, MediaStore {
 
     const result = await client.sendCode({ apiId, apiHash }, phone);
     const loginId = randomToken(18);
-    this.saveLoginState(loginId, { phoneCodeHash: result.phoneCodeHash, phone });
-    this.logger.info("telegram login code requested", { });
+    await this.saveLoginState(loginId, { phoneCodeHash: result.phoneCodeHash, phone });
+    this.logger.info("telegram login code requested", {});
     return { loginId, step: "awaiting_code" };
   }
 
   async submitCode(loginId: string, code: string, phone?: string): Promise<{ step: LoginStep }> {
-    const state = this.loadLoginState(loginId);
+    const state = await this.loadLoginState(loginId);
     if (!state) throw new Error("Login session expired or unknown; restart the login");
     const client = await this.ensureClient();
     try {
@@ -345,30 +342,31 @@ export class TelegramService implements TelegramBackend, MediaStore {
       }
       throw err;
     }
-    this.persistAuthorizedSession(client);
-    this.clearLoginState(loginId);
+    await this.persistAuthorizedSession(client);
+    await this.clearLoginState(loginId);
     return { step: "ok" };
   }
 
   async submitPassword(loginId: string, password: string): Promise<{ step: LoginStep }> {
-    const state = this.loadLoginState(loginId);
+    const state = await this.loadLoginState(loginId);
     if (!state) throw new Error("Login session expired or unknown; restart the login");
     const client = await this.ensureClient();
     const pwd = await client.invoke(new Api.account.GetPassword());
     const check = await computeCheck(pwd, password);
     await client.invoke(new Api.auth.CheckPassword({ password: check }));
-    this.persistAuthorizedSession(client);
-    this.clearLoginState(loginId);
+    await this.persistAuthorizedSession(client);
+    await this.clearLoginState(loginId);
     return { step: "ok" };
   }
 
-  private persistAuthorizedSession(client: TelegramClient): void {
+  private async persistAuthorizedSession(client: TelegramClient): Promise<void> {
     const session = client.session.save();
     if (!session) throw new Error("Telegram did not return a session string");
-    this.saveSession(session);
+    await this.saveSession(session);
     this.logger.info("telegram session persisted");
     // If a channel was pre-configured in env, resolve it now.
-    if (!this.configRow()?.channel_id && this.config.telegram.channel) {
+    const row = await this.configRow();
+    if (!row?.channel_id && this.config.telegram.channel) {
       void this.setChannel(this.config.telegram.channel).catch((err) =>
         this.logger.warn("could not auto-resolve configured channel", { error: errMessage(err) }),
       );
@@ -383,8 +381,8 @@ export class TelegramService implements TelegramBackend, MediaStore {
       }
     } finally {
       this.client = null;
-      this.clearSession();
-      this.db.prepare("DELETE FROM telegram_login").run();
+      await this.clearSession();
+      await this.db.run("DELETE FROM telegram_login");
     }
   }
 
@@ -392,7 +390,8 @@ export class TelegramService implements TelegramBackend, MediaStore {
 
   async setChannel(channel?: string): Promise<{ id: string; title: string | null }> {
     const client = await this.requireAuthorized();
-    const target = (channel ?? this.configRow()?.channel_id ?? this.config.telegram.channel ?? "").trim();
+    const row = await this.configRow();
+    const target = (channel ?? row?.channel_id ?? this.config.telegram.channel ?? "").trim();
 
     let entity: Api.Channel;
     if (!target) {
@@ -410,7 +409,7 @@ export class TelegramService implements TelegramBackend, MediaStore {
     const id = String(entity.id);
     const accessHash = entity.accessHash ? String(entity.accessHash) : "0";
     const title = entity.title ?? null;
-    this.upsertConfig({ channelId: id, channelAccessHash: accessHash, channelTitle: title ?? undefined });
+    await this.upsertConfig({ channelId: id, channelAccessHash: accessHash, channelTitle: title ?? undefined });
     this.logger.info("telegram channel set", { channelId: id, title });
     return { id, title };
   }
@@ -438,7 +437,7 @@ export class TelegramService implements TelegramBackend, MediaStore {
 
   async upload(input: UploadInput): Promise<StoredMedia> {
     const client = await this.requireAuthorized();
-    const peer = this.peer();
+    const peer = await this.peer();
 
     const cb = ((progress: number) => {
       input.onProgress?.(progress, Math.floor(progress * input.size));
@@ -484,9 +483,10 @@ export class TelegramService implements TelegramBackend, MediaStore {
     const size = docObj?.size ? Number(docObj.size) : input.size;
     const mime = docObj?.mimeType ?? input.mime;
 
+    const row = await this.configRow();
     return {
       messageId: message.id,
-      channelId: String(this.configRow()!.channel_id),
+      channelId: String(row!.channel_id),
       size,
       mime,
       duration: input.durationSeconds,
@@ -499,7 +499,7 @@ export class TelegramService implements TelegramBackend, MediaStore {
   }
 
   private async fetchMessage(client: TelegramClient, ref: MessageRef): Promise<Api.Message> {
-    const messages = await client.getMessages(this.peer(), { ids: [ref.messageId] });
+    const messages = await client.getMessages(await this.peer(), { ids: [ref.messageId] });
     const message = messages[0];
     const doc =
       message?.document ??
@@ -550,6 +550,6 @@ export class TelegramService implements TelegramBackend, MediaStore {
 
   async delete(ref: MessageRef): Promise<void> {
     const client = await this.requireAuthorized();
-    await client.deleteMessages(this.peer(), [ref.messageId], { revoke: true });
+    await client.deleteMessages(await this.peer(), [ref.messageId], { revoke: true });
   }
 }

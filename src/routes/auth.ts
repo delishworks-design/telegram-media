@@ -40,7 +40,7 @@ export function authRoutes(deps: AppDeps): Router {
         res.status(401).json({ error: "invalid_credentials" });
         return;
       }
-      const { token, session } = createSession(db, {
+      const { token, session } = await createSession(db, {
         username,
         ttlSeconds: config.sessionTtlSeconds,
         ip: req.ip,
@@ -52,34 +52,50 @@ export function authRoutes(deps: AppDeps): Router {
     }),
   );
 
-  router.post("/api/auth/logout", requireAuth(db), (req, res) => {
-    revokeSession(db, req.cookies?.[SESSION_COOKIE]);
-    res.clearCookie(SESSION_COOKIE, { ...cookieOptions, maxAge: undefined });
-    res.json({ ok: true });
-  });
+  router.post(
+    "/api/auth/logout",
+    requireAuth(db),
+    asyncHandler(async (req, res) => {
+      await revokeSession(db, req.cookies?.[SESSION_COOKIE]);
+      res.clearCookie(SESSION_COOKIE, { ...cookieOptions, maxAge: undefined });
+      res.json({ ok: true });
+    }),
+  );
 
   router.get("/api/auth/me", requireAuth(db), (_req, res) => {
     const user = currentUser(res)!;
     res.json({ user: { username: user.username }, sessionId: user.id, expiresAt: user.expiresAt });
   });
 
-  router.get("/api/auth/sessions", requireAuth(db), (_req, res) => {
-    const user = currentUser(res)!;
-    res.json({ sessions: listSessions(db, user.username) });
-  });
+  router.get(
+    "/api/auth/sessions",
+    requireAuth(db),
+    asyncHandler(async (_req, res) => {
+      const user = currentUser(res)!;
+      res.json({ sessions: await listSessions(db, user.username) });
+    }),
+  );
 
-  router.delete("/api/auth/sessions/:id", requireAuth(db), (req, res) => {
-    const user = currentUser(res)!;
-    revokeSessionById(db, req.params.id!);
-    res.json({ ok: true, current: req.params.id === user.id });
-  });
+  router.delete(
+    "/api/auth/sessions/:id",
+    requireAuth(db),
+    asyncHandler(async (req, res) => {
+      const user = currentUser(res)!;
+      await revokeSessionById(db, req.params.id!);
+      res.json({ ok: true, current: req.params.id === user.id });
+    }),
+  );
 
-  router.post("/api/auth/logout-all", requireAuth(db), (_req, res) => {
-    const user = currentUser(res)!;
-    const revoked = revokeAllForUser(db, user.username);
-    res.clearCookie(SESSION_COOKIE, { ...cookieOptions, maxAge: undefined });
-    res.json({ ok: true, revoked });
-  });
+  router.post(
+    "/api/auth/logout-all",
+    requireAuth(db),
+    asyncHandler(async (_req, res) => {
+      const user = currentUser(res)!;
+      const revoked = await revokeAllForUser(db, user.username);
+      res.clearCookie(SESSION_COOKIE, { ...cookieOptions, maxAge: undefined });
+      res.json({ ok: true, revoked });
+    }),
+  );
 
   return router;
 }

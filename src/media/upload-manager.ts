@@ -3,7 +3,7 @@ import { promises as fsp } from "node:fs";
 import { join } from "node:path";
 import { randomToken } from "../util/crypto.js";
 import type { AppConfig } from "../config.js";
-import type { Database } from "../db/index.js";
+import type { Db } from "../db/index.js";
 import type { Logger } from "../util/logger.js";
 import { floodWaitSeconds, TelegramFloodError } from "../telegram/service.js";
 import type { MediaStore } from "./store.js";
@@ -68,7 +68,7 @@ export class UploadManager {
   constructor(
     private readonly deps: {
       config: AppConfig;
-      db: Database;
+      db: Db;
       store: MediaStore;
       repo: MediaRepository;
       logger: Logger;
@@ -80,10 +80,11 @@ export class UploadManager {
   async start(): Promise<void> {
     await fsp.mkdir(this.deps.config.uploadTmpDir, { recursive: true });
     // Any "processing" rows are leftovers from a crash; requeue them.
-    this.deps.db
-      .prepare("UPDATE uploads SET status = 'pending', updated_at = ? WHERE status = 'processing'")
-      .run(Date.now());
-    this.pump();
+    await this.deps.db.run(
+      "UPDATE uploads SET status = 'pending', updated_at = ? WHERE status = 'processing'",
+      [Date.now()],
+    );
+    void this.pump();
   }
 
   stop(): void {
@@ -132,20 +133,20 @@ export class UploadManager {
     await handle.close();
 
     const now = Date.now();
-    this.deps.db
-      .prepare(
-        `INSERT INTO uploads (id, name, size, mime, received, expected_chunks, status, tmp_path, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 0, ?, 'uploading', ?, ?, ?, ?)`,
-      )
-      .run(id, name, input.size, input.mime, expectedChunks, tmpPath, input.createdBy, now, now);
+    await this.deps.db.run(
+      `INSERT INTO uploads (id, name, size, mime, received, expected_chunks, status, tmp_path, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 0, ?, 'uploading', ?, ?, ?, ?)`,
+      [id, name, input.size, input.mime, expectedChunks, tmpPath, input.createdBy, now, now],
+    );
 
-    const upload = this.get(id)!;
+    const upload = await this.get(id);
+    if (!upload) throw new Error("Upload row vanished after insert");
     this.emit({ type: "created", uploadId: id, record: upload });
     return { id, chunkSize: config.chunkSizeBytes, expectedChunks, upload };
   }
 
   async appendChunk(id: string, index: number, data: Buffer): Promise<UploadRecord> {
-    const row = this.raw(id);
+    const row = await this.raw(id);
     if (!row) throw Object.assign(new Error("Unknown upload"), { statusCode: 404 });
     if (row.status !== "uploading") {
       throw Object.assign(new Error(`Upload is ${row.status}`), { statusCode: 409 });
@@ -159,9 +160,10 @@ export class UploadManager {
       throw Object.assign(new Error("Chunk overruns declared file size"), { statusCode: 416 });
     }
 
-    const existing = this.deps.db
-      .prepare("SELECT size FROM upload_chunks WHERE upload_id = ? AND idx = ?")
-      .get(id, index) as { size: number } | undefined;
+    const existing = await this.deps.db.get<{ size: number }>(
+      "SELECT size FROM upload_chunks WHERE upload_id = ? AND idx = ?",
+      [id, index],
+    );
     const handle = await fsp.open(row.tmp_path!, "r+");
     try {
       await handle.write(data, 0, data.length, offset);
@@ -170,40 +172,47 @@ export class UploadManager {
     }
 
     if (existing) {
-      this.deps.db
-        .prepare("UPDATE upload_chunks SET size = ? WHERE upload_id = ? AND idx = ?")
-        .run(data.length, id, index);
+      await this.deps.db.run("UPDATE upload_chunks SET size = ? WHERE upload_id = ? AND idx = ?", [
+        data.length,
+        id,
+        index,
+      ]);
     } else {
-      this.deps.db
-        .prepare("INSERT INTO upload_chunks (upload_id, idx, size) VALUES (?, ?, ?)")
-        .run(id, index, data.length);
+      await this.deps.db.run("INSERT INTO upload_chunks (upload_id, idx, size) VALUES (?, ?, ?)", [
+        id,
+        index,
+        data.length,
+      ]);
     }
 
-    const agg = this.deps.db
-      .prepare("SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s FROM upload_chunks WHERE upload_id = ?")
-      .get(id) as { c: number; s: number };
-    this.deps.db
-      .prepare("UPDATE uploads SET received = ?, updated_at = ? WHERE id = ?")
-      .run(agg.s, Date.now(), id);
+    const agg = (await this.deps.db.get<{ c: number; s: number }>(
+      "SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s FROM upload_chunks WHERE upload_id = ?",
+      [id],
+    ))!;
+    await this.deps.db.run("UPDATE uploads SET received = ?, updated_at = ? WHERE id = ?", [
+      agg.s,
+      Date.now(),
+      id,
+    ]);
 
     if (agg.c >= expected && agg.s >= row.size) {
       await this.finalize(id);
     } else {
-      const rec = this.get(id)!;
-      this.emit({ type: "progress", uploadId: id, record: rec });
+      const rec = await this.get(id);
+      if (rec) this.emit({ type: "progress", uploadId: id, record: rec });
     }
-    return this.get(id)!;
+    const record = await this.get(id);
+    if (!record) throw Object.assign(new Error("Unknown upload"), { statusCode: 404 });
+    return record;
   }
 
   async finalize(id: string): Promise<UploadRecord> {
-    const row = this.raw(id);
+    const row = await this.raw(id);
     if (!row) throw Object.assign(new Error("Unknown upload"), { statusCode: 404 });
-    if (row.received < row.size && !(row.expected_chunks && row.status === "uploading")) {
-      // fall through; handled below
-    }
-    const agg = this.deps.db
-      .prepare("SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s FROM upload_chunks WHERE upload_id = ?")
-      .get(id) as { c: number; s: number };
+    const agg = (await this.deps.db.get<{ c: number; s: number }>(
+      "SELECT COUNT(*) AS c, COALESCE(SUM(size), 0) AS s FROM upload_chunks WHERE upload_id = ?",
+      [id],
+    ))!;
     if (agg.s < row.size || agg.c < (row.expected_chunks ?? 0)) {
       throw Object.assign(
         new Error(`Upload incomplete: received ${agg.s} of ${row.size} bytes`),
@@ -211,45 +220,50 @@ export class UploadManager {
       );
     }
     if (row.status === "uploading" || row.status === "error") {
-      this.deps.db
-        .prepare("UPDATE uploads SET status = 'pending', error = NULL, updated_at = ? WHERE id = ?")
-        .run(Date.now(), id);
-      const rec = this.get(id)!;
-      this.emit({ type: "pending", uploadId: id, record: rec });
-      this.pump();
+      await this.deps.db.run("UPDATE uploads SET status = 'pending', error = NULL, updated_at = ? WHERE id = ?", [
+        Date.now(),
+        id,
+      ]);
+      const rec = await this.get(id);
+      if (rec) this.emit({ type: "pending", uploadId: id, record: rec });
+      void this.pump();
     }
-    return this.get(id)!;
+    const record = await this.get(id);
+    if (!record) throw Object.assign(new Error("Unknown upload"), { statusCode: 404 });
+    return record;
   }
 
-  cancel(id: string): UploadRecord | null {
-    const row = this.raw(id);
+  async cancel(id: string): Promise<UploadRecord | null> {
+    const row = await this.raw(id);
     if (!row) return null;
     if (row.status === "done" || row.status === "cancelled") return this.get(id);
     const active = this.active.get(id);
     if (active) active.abort.abort();
-    this.deps.db
-      .prepare("UPDATE uploads SET status = 'cancelled', updated_at = ? WHERE id = ?")
-      .run(Date.now(), id);
+    await this.deps.db.run("UPDATE uploads SET status = 'cancelled', updated_at = ? WHERE id = ?", [
+      Date.now(),
+      id,
+    ]);
     void this.removeTmp(row.tmp_path);
-    const rec = this.get(id)!;
-    this.emit({ type: "cancelled", uploadId: id, record: rec });
+    const rec = await this.get(id);
+    if (rec) this.emit({ type: "cancelled", uploadId: id, record: rec });
     return rec;
   }
 
-  retry(id: string): UploadRecord | null {
-    const row = this.raw(id);
+  async retry(id: string): Promise<UploadRecord | null> {
+    const row = await this.raw(id);
     if (!row) return null;
     if (row.status === "error") {
-      this.deps.db
-        .prepare("UPDATE uploads SET status = 'pending', error = NULL, updated_at = ? WHERE id = ?")
-        .run(Date.now(), id);
-      this.pump();
+      await this.deps.db.run("UPDATE uploads SET status = 'pending', error = NULL, updated_at = ? WHERE id = ?", [
+        Date.now(),
+        id,
+      ]);
+      void this.pump();
     }
     return this.get(id);
   }
 
-  get(id: string): UploadRecord | null {
-    const row = this.raw(id);
+  async get(id: string): Promise<UploadRecord | null> {
+    const row = await this.raw(id);
     if (!row) return null;
     const progress =
       row.status === "done" || row.status === "pending" || row.status === "error" || row.status === "cancelled"
@@ -276,19 +290,19 @@ export class UploadManager {
     };
   }
 
-  list(createdBy?: string): UploadRecord[] {
+  async list(createdBy?: string): Promise<UploadRecord[]> {
     const rows = createdBy
-      ? (this.deps.db
-          .prepare("SELECT id FROM uploads WHERE created_by = ? ORDER BY created_at DESC LIMIT 100")
-          .all(createdBy) as { id: string }[])
-      : (this.deps.db.prepare("SELECT id FROM uploads ORDER BY created_at DESC LIMIT 100").all() as {
-          id: string;
-        }[]);
-    return rows.map((r) => this.get(r.id)!).filter(Boolean);
+      ? await this.deps.db.all<{ id: string }>(
+          "SELECT id FROM uploads WHERE created_by = ? ORDER BY created_at DESC LIMIT 100",
+          [createdBy],
+        )
+      : await this.deps.db.all<{ id: string }>("SELECT id FROM uploads ORDER BY created_at DESC LIMIT 100");
+    const records = await Promise.all(rows.map((r) => this.get(r.id)));
+    return records.filter((r): r is UploadRecord => Boolean(r));
   }
 
-  private raw(id: string): Row | undefined {
-    return this.deps.db.prepare("SELECT * FROM uploads WHERE id = ?").get(id) as Row | undefined;
+  private async raw(id: string): Promise<Row | undefined> {
+    return this.deps.db.get<Row>("SELECT * FROM uploads WHERE id = ?", [id]);
   }
 
   private async removeTmp(path: string | null): Promise<void> {
@@ -298,11 +312,11 @@ export class UploadManager {
 
   // --- processing queue -----------------------------------------------------
 
-  private pump(): void {
+  private async pump(): Promise<void> {
     if (this.stopped) return;
     const max = this.deps.config.uploadConcurrency;
     while (this.workers < max) {
-      const next = this.nextPending();
+      const next = await this.nextPending();
       if (!next) return;
       this.workers++;
       const task = this.process(next)
@@ -310,17 +324,17 @@ export class UploadManager {
         .finally(() => {
           this.workers--;
           this.activePromises.delete(task);
-          this.pump();
+          void this.pump();
         });
       this.activePromises.add(task);
     }
   }
 
-  private nextPending(): Row | undefined {
+  private async nextPending(): Promise<Row | undefined> {
     const now = Date.now();
-    const rows = this.deps.db
-      .prepare("SELECT * FROM uploads WHERE status = 'pending' ORDER BY created_at ASC LIMIT 20")
-      .all() as Row[];
+    const rows = await this.deps.db.all<Row>(
+      "SELECT * FROM uploads WHERE status = 'pending' ORDER BY created_at ASC LIMIT 20",
+    );
     return rows.find((r) => (this.notBefore.get(r.id) ?? 0) <= now);
   }
 
@@ -328,10 +342,12 @@ export class UploadManager {
     if (this.stopped) return;
     const abort = new AbortController();
     this.active.set(row.id, { abort, progress: 0 });
-    this.deps.db
-      .prepare("UPDATE uploads SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE id = ?")
-      .run(Date.now(), row.id);
-    this.emit({ type: "progress", uploadId: row.id, record: this.get(row.id)! });
+    await this.deps.db.run(
+      "UPDATE uploads SET status = 'processing', attempts = attempts + 1, updated_at = ? WHERE id = ?",
+      [Date.now(), row.id],
+    );
+    const started = await this.get(row.id);
+    if (started) this.emit({ type: "progress", uploadId: row.id, record: started });
 
     try {
       const stored = await this.deps.store.upload({
@@ -343,7 +359,9 @@ export class UploadManager {
         onProgress: (fraction) => {
           const entry = this.active.get(row.id);
           if (entry) entry.progress = fraction;
-          this.emit({ type: "progress", uploadId: row.id, record: this.get(row.id)! });
+          void this.get(row.id).then((rec) => {
+            if (rec) this.emit({ type: "progress", uploadId: row.id, record: rec });
+          });
         },
       });
 
@@ -352,24 +370,27 @@ export class UploadManager {
         return;
       }
       // If it was cancelled mid-flight, do not persist a media row.
-      const current = this.raw(row.id);
+      const current = await this.raw(row.id);
       if (!current || current.status === "cancelled") {
         await this.removeTmp(row.tmp_path);
         return;
       }
 
       const mediaId = randomToken(16);
-      this.deps.repo.insert({ id: mediaId, name: row.name, stored, createdBy: row.created_by });
-      this.deps.db
-        .prepare("UPDATE uploads SET status = 'done', media_id = ?, received = size, updated_at = ? WHERE id = ?")
-        .run(mediaId, Date.now(), row.id);
+      await this.deps.repo.insert({ id: mediaId, name: row.name, stored, createdBy: row.created_by });
+      await this.deps.db.run(
+        "UPDATE uploads SET status = 'done', media_id = ?, received = size, updated_at = ? WHERE id = ?",
+        [mediaId, Date.now(), row.id],
+      );
       await this.removeTmp(row.tmp_path);
-      this.emit({ type: "done", uploadId: row.id, record: this.get(row.id)! });
+      const done = await this.get(row.id);
+      if (done) this.emit({ type: "done", uploadId: row.id, record: done });
       this.deps.logger.info("upload complete", { uploadId: row.id, mediaId, size: row.size });
     } catch (err) {
-      const current = this.raw(row.id);
+      const current = await this.raw(row.id);
       if (current?.status === "cancelled" || (err as Error)?.name === "AbortError" || abort.signal.aborted) {
-        this.emit({ type: "cancelled", uploadId: row.id, record: this.get(row.id)! });
+        const rec = await this.get(row.id);
+        if (rec) this.emit({ type: "cancelled", uploadId: row.id, record: rec });
         return;
       }
       if (this.stopped) return;
@@ -377,20 +398,32 @@ export class UploadManager {
       if (wait > 0) {
         const delay = Math.min(wait, 600) * 1000 + 1000;
         this.notBefore.set(row.id, Date.now() + delay);
-        this.deps.db
-          .prepare("UPDATE uploads SET status = 'pending', updated_at = ? WHERE id = ?")
-          .run(Date.now(), row.id);
+        await this.deps.db.run("UPDATE uploads SET status = 'pending', updated_at = ? WHERE id = ?", [
+          Date.now(),
+          row.id,
+        ]);
         this.deps.logger.warn("telegram flood wait, will retry", { uploadId: row.id, seconds: wait });
-        this.emit({ type: "retry", uploadId: row.id, record: this.get(row.id)!, message: `Rate limited by Telegram; retrying in ${wait}s` });
-        setTimeout(() => this.pump(), delay).unref?.();
+        const rec = await this.get(row.id);
+        if (rec) {
+          this.emit({
+            type: "retry",
+            uploadId: row.id,
+            record: rec,
+            message: `Rate limited by Telegram; retrying in ${wait}s`,
+          });
+        }
+        setTimeout(() => void this.pump(), delay).unref?.();
         return;
       }
       const message = (err as Error)?.message ?? "upload failed";
-      this.deps.db
-        .prepare("UPDATE uploads SET status = 'error', error = ?, updated_at = ? WHERE id = ?")
-        .run(message.slice(0, 500), Date.now(), row.id);
+      await this.deps.db.run("UPDATE uploads SET status = 'error', error = ?, updated_at = ? WHERE id = ?", [
+        message.slice(0, 500),
+        Date.now(),
+        row.id,
+      ]);
       this.deps.logger.error("upload failed", { uploadId: row.id, error: message });
-      this.emit({ type: "error", uploadId: row.id, record: this.get(row.id)!, message });
+      const rec = await this.get(row.id);
+      if (rec) this.emit({ type: "error", uploadId: row.id, record: rec, message });
     } finally {
       this.active.delete(row.id);
     }

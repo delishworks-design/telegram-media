@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { createApp, type AppDeps } from "../src/app.js";
 import { loadConfig, type AppConfig } from "../src/config.js";
-import { openDatabase, type Database } from "../src/db/index.js";
+import { openDatabase, type Db } from "../src/db/index.js";
 import { createLogger } from "../src/util/logger.js";
 import { hashPassword } from "../src/util/crypto.js";
 import { MediaRepository } from "../src/media/repository.js";
@@ -25,7 +25,7 @@ export class FakeStore implements MediaStore {
   private seq = 0;
   readonly files = new Map<number, { data: Buffer; mime: string }>();
 
-  ready(): boolean {
+  async ready(): Promise<boolean> {
     return true;
   }
 
@@ -61,7 +61,7 @@ export class FakeTelegram implements TelegramBackend {
   private authorized = true;
   private channelSet = true;
   constructor(private readonly store: FakeStore) {}
-  ready(): boolean {
+  async ready(): Promise<boolean> {
     return this.authorized && this.channelSet;
   }
   async upload(input: UploadInput): Promise<StoredMedia> {
@@ -82,7 +82,7 @@ export class FakeTelegram implements TelegramBackend {
       authorized: this.authorized,
       channel: { set: this.channelSet, id: "fake-channel", title: "Fake Vault" },
       account: this.authorized ? { id: "1", username: "tester", firstName: "Test" } : null,
-      storeReady: this.ready(),
+      storeReady: await this.ready(),
     };
   }
   async startLogin(): Promise<{ loginId: string; step: LoginStep }> {
@@ -107,7 +107,7 @@ export interface TestContext {
   app: ReturnType<typeof createApp>;
   deps: AppDeps;
   config: AppConfig;
-  db: Database;
+  db: Db;
   store: FakeStore;
   telegram: FakeTelegram;
   repo: MediaRepository;
@@ -132,7 +132,7 @@ export async function buildTestContext(): Promise<TestContext> {
     PORT: "0",
   });
 
-  const db = openDatabase(":memory:");
+  const db = await openDatabase(":memory:");
   const logger = createLogger("error");
   const store = new FakeStore();
   const telegram = new FakeTelegram(store);
@@ -167,16 +167,21 @@ export async function buildTestContext(): Promise<TestContext> {
       realtime.close();
       await uploads.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      db.close();
+      await db.close();
       await fs.rm(tmpDir, { recursive: true, force: true });
     },
   };
 }
 
-export function seedMedia(ctx: TestContext, name: string, mime: string, data: Buffer): { id: string; stored: StoredMedia } {
+export async function seedMedia(
+  ctx: TestContext,
+  name: string,
+  mime: string,
+  data: Buffer,
+): Promise<{ id: string; stored: StoredMedia }> {
   const stored = ctx.store.put(data, mime);
   const id = `media-${stored.messageId}`;
-  ctx.repo.insert({ id, name, stored, createdBy: "owner" });
+  await ctx.repo.insert({ id, name, stored, createdBy: "owner" });
   return { id, stored };
 }
 
